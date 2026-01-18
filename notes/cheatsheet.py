@@ -63,3 +63,6 @@ with col_right:
 # When you need a sidebar, copy lines 23-29 and paste them into your main app.py.
 
 # Important: Change city_column to whatever your actual CSV column is called (e.g., location or district).
+
+
+
