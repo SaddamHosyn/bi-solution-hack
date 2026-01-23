@@ -1,12 +1,31 @@
-venv/
+# --- Python & Virtual Environments ---
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+venv/
 .env
 .env.*
+
+# --- Operating System & IDEs ---
 .DS_Store
-*.sqlite3
-.idea/
 .vscode/
+.idea/
+
+# --- Data & Warehousing (Local Only) ---
+data/
+warehouse/
+*.duckdb
+*.sqlite3
+
+# --- dbt (Logs, Artifacts, Packages) ---
+dbt_project/logs/
+dbt_project/my_pipeline/logs/
+dbt_project/my_pipeline/target/
+dbt_project/my_pipeline/dbt_packages/
 *.log
+
+# --- Documentation Files ---
+*.pdf
+DATA_SCHEMA.pdf
+Hackathon with BI Solutions.PDF
+PROJECT_DESCRIPTION.pdf
