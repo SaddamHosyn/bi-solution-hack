@@ -4,6 +4,7 @@ import json
 import glob
 import os
 import numpy as np
+import requests
 
 # CONFIG: Path to your DuckDB warehouse
 DB_PATH = "warehouse/warehouse.duckdb"
@@ -69,63 +70,67 @@ def load_grocery_sales(con):
         con.execute("CREATE OR REPLACE TABLE bronze_grocery_sales AS SELECT * FROM full_df")
         print(f"✅ Bronze Grocery Sales loaded ({len(full_df)} rows).")
 
-def load_population_from_be001_json(con):
-    """Parses the complex PX-Web JSON-stat format."""
-    print("Loading Population Data (JSON)...")
+def extract_population_from_api(con):
+    print("🌍 Extracting Population Data from ÅSUB API...")
+    
+    # Saved Query URL (returns CSV directly)
+    url = "https://pxweb.asub.ax/PXWeb/sq/12095902-f8bb-4e6c-8eb2-348ac9b4e767"
+    
     try:
-        if not os.path.exists(POPULATION_JSON):
-            print(f"⚠️ Population file not found at {POPULATION_JSON}")
-            return
-
-        with open(POPULATION_JSON, "r", encoding="utf-8") as f:
-            j = json.load(f)
-
-        ds = j["dataset"]
-        dim = ds["dimension"]
-
-        # 1. Extract indices for dimensions
-        year_idx = dim["år"]["category"]["index"]
-        age_idx = dim["ålder"]["category"]["index"]
-        mun_idx = dim["kommun"]["category"]["index"]
-        sex_idx = dim["kön"]["category"]["index"]
-
-        # 2. Build ordered lists of codes
-        years = [k for k, _ in sorted(year_idx.items(), key=lambda kv: kv[1])]
-        muns  = [k for k, _ in sorted(mun_idx.items(),  key=lambda kv: kv[1])]
-
-        # 3. Reshape the flat value list into a 4D array
-        sizes = dim["size"]  # [year, age, municipality, sex]
-        arr = np.array(ds["value"], dtype="float64").reshape(sizes)
-
-        # 4. Filter: Age='SSS' (Total), Sex='0' (Both sexes)
-        # Note: We access by the integer index we found in step 1
-        arr_tot = arr[:, age_idx["SSS"], :, sex_idx["0"]]  # shape: (years, municipalities)
-
-        # 5. Convert to DataFrame (Year x Municipality)
-        df = (
-            pd.DataFrame(arr_tot, index=years, columns=muns)
-              .reset_index(names="year")
-              .melt(id_vars=["year"], var_name="municipality_code", value_name="population")
-        )
-        df["year"] = df["year"].astype(int)
-
-        # 6. Create Dimension Table (Code -> Name)
-        mun_label = dim["kommun"]["category"]["label"]
-        dim_mun = pd.DataFrame(
-            [{"municipality_code": code, "municipality_name": mun_label[code]} for code in muns]
-        )
-
-        # 7. Save to DuckDB
-        con.register("pop_df", df)
-        con.execute("CREATE OR REPLACE TABLE bronze_population AS SELECT * FROM pop_df")
+        # Fetch CSV data from API
+        response = requests.get(url)
+        response.raise_for_status()
         
-        con.register("mun_df", dim_mun)
-        con.execute("CREATE OR REPLACE TABLE dim_municipality AS SELECT * FROM mun_df")
+        # Read CSV, skipping the title row (row 0)
+        from io import StringIO
+        df_raw = pd.read_csv(StringIO(response.text), skiprows=1)
         
-        print("✅ Bronze Population & Municipality Dim loaded.")
+        print(f"   Raw data shape: {df_raw.shape}")
+        print(f"   Columns: {df_raw.columns.tolist()[:5]}...")  # Show first 5 columns
+        
+        # Save raw "wide" data to Bronze layer
+        con.execute("CREATE OR REPLACE TABLE bronze_population_raw AS SELECT * FROM df_raw")
+        
+        # Reshape from wide to long format
+        # Columns are: year, age, "Brändö Both sexes", "Brändö Females", "Brändö Males", ...
+        id_cols = ['year', 'age']
+        df_long = df_raw.melt(id_vars=id_cols, var_name='municipality_sex', value_name='population')
+        
+        # Parse "Mariehamn Both sexes" into municipality_name and sex
+        def parse_mun_sex(val):
+            if ' Both sexes' in val:
+                return val.replace(' Both sexes', ''), 'Both sexes'
+            elif ' Females' in val:
+                return val.replace(' Females', ''), 'Females'
+            elif ' Males' in val:
+                return val.replace(' Males', ''), 'Males'
+            else:
+                return val, 'Unknown'
+        
+        parsed = df_long['municipality_sex'].apply(parse_mun_sex)
+        df_long['municipality_name'] = parsed.apply(lambda x: x[0])
+        df_long['sex'] = parsed.apply(lambda x: x[1])
+        
+        # Drop the combined column and reorder
+        df_long = df_long.drop(columns=['municipality_sex'])
+        df_long = df_long[['year', 'age', 'municipality_name', 'sex', 'population']]
+        
+        # Save to Bronze layer
+        con.execute("CREATE OR REPLACE TABLE bronze_population AS SELECT * FROM df_long")
+        
+        # Create dimension table for municipalities
+        dim_mun = df_long[['municipality_name']].drop_duplicates().reset_index(drop=True)
+        con.execute("CREATE OR REPLACE TABLE dim_municipality AS SELECT * FROM dim_mun")
+        
+        row_count = con.execute("SELECT COUNT(*) FROM bronze_population").fetchone()[0]
+        print(f"✅ Bronze Population loaded from API ({row_count} rows).")
 
     except Exception as e:
-        print(f"❌ Error loading Population JSON: {e}")
+        print(f"❌ Error fetching from API: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 
 def main():
     con = get_db_connection()
@@ -133,7 +138,7 @@ def main():
     load_tourism(con)
     load_grocery_reference(con)
     load_grocery_sales(con)
-    load_population_from_be001_json(con)  # <--- Now calling the correct function
+    extract_population_from_api(con)
     
     con.close()
     print("🚀 Ingestion Complete! Data is in warehouse.duckdb")
