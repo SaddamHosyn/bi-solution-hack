@@ -1,14 +1,19 @@
 import duckdb
+from pathlib import Path
 
 
 def run_gold_layer():
-    con = duckdb.connect('warehouse/warehouse.duckdb')
+    project_root = Path(__file__).resolve().parents[2]
+    warehouse_dir = project_root / "warehouse"
+    warehouse_dir.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(str(warehouse_dir / "warehouse.duckdb"))
 
     # ========================================
     # GOLD: Monthly Sales Summary
     # ========================================
     print("🏆 Creating Gold Monthly Sales...")
-    con.execute("""
+    con.execute(
+        """
         CREATE OR REPLACE TABLE gold_monthly_sales AS
         SELECT 
             year,
@@ -21,7 +26,8 @@ def run_gold_layer():
         FROM silver_grocery_sales
         GROUP BY year, month, municipality, category
         ORDER BY year, month, municipality, category
-    """)
+    """
+    )
     count = con.execute("SELECT COUNT(*) FROM gold_monthly_sales").fetchone()[0]
     print(f"✅ Gold Monthly Sales: {count:,} rows")
 
@@ -29,7 +35,8 @@ def run_gold_layer():
     # GOLD: Yearly Sales by Municipality (with Per Capita)
     # ========================================
     print("🏆 Creating Gold Sales by Municipality (with Per Capita)...")
-    con.execute("""
+    con.execute(
+        """
         CREATE OR REPLACE TABLE gold_sales_by_municipality AS
         SELECT 
             s.year,
@@ -54,7 +61,8 @@ def run_gold_layer():
             ON s.year = p.year 
             AND s.municipality = p.municipality_name
         ORDER BY s.year, s.municipality
-    """)
+    """
+    )
     count = con.execute("SELECT COUNT(*) FROM gold_sales_by_municipality").fetchone()[0]
     print(f"✅ Gold Sales by Municipality: {count:,} rows")
 
@@ -62,7 +70,8 @@ def run_gold_layer():
     # GOLD: Yearly Category Performance
     # ========================================
     print("🏆 Creating Gold Category Performance...")
-    con.execute("""
+    con.execute(
+        """
         CREATE OR REPLACE TABLE gold_category_performance AS
         SELECT 
             year,
@@ -74,7 +83,8 @@ def run_gold_layer():
         FROM silver_grocery_sales
         GROUP BY year, category
         ORDER BY year, total_revenue DESC
-    """)
+    """
+    )
     count = con.execute("SELECT COUNT(*) FROM gold_category_performance").fetchone()[0]
     print(f"✅ Gold Category Performance: {count:,} rows")
 
@@ -82,7 +92,8 @@ def run_gold_layer():
     # GOLD: Tourism + Sales Correlation Data
     # ========================================
     print("🏆 Creating Gold Tourism Sales Correlation...")
-    con.execute("""
+    con.execute(
+        """
         CREATE OR REPLACE TABLE gold_tourism_sales AS
         SELECT 
             s.year,
@@ -111,7 +122,8 @@ def run_gold_layer():
             GROUP BY year, month
         ) t ON s.year = t.year AND s.month = t.month
         ORDER BY s.year, s.month
-    """)
+    """
+    )
     count = con.execute("SELECT COUNT(*) FROM gold_tourism_sales").fetchone()[0]
     print(f"✅ Gold Tourism Sales: {count:,} rows")
 
